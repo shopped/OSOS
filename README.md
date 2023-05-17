@@ -2,7 +2,7 @@
 
 There is a button to indicate if somebody is at crash space, which is a non profit community maker space.
 
-[Picture of button]
+![Picture of button](images/Button.png)
 
 When you press the button it will update the website showing that the space is open for the next hour. 
 
@@ -10,15 +10,15 @@ This code repository is the software and hardware information for a sign that wi
 
 Here is how the sign will look when nobody is at the space.
 
-[Picture of sign turned off]
+![Picture of sign turned off](images/unlit.png)
 
 And if somebody presses the button, the sign will light up and look like this.
 
-[Picture of sign turned on]
+![Picture of sign turned on](images/lit.png)
 
 Below is a picture of the internals and a bill of materials. This repository is free and open source under GNU GPLv3
 
-[Picture of internals]
+![Picture of internals](images/wiring.png)
 
 ## Bill of Materials
 
