@@ -1,49 +1,62 @@
 #include <FastLED.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <Adafruit_SleepyDog.h>
 
 #define NUM_LEDS_LIGHTNING 8
 #define NUM_LEDS_TEXT 24
 #define LIGHTNING_BOLT_PIN 18
 #define OPEN_TEXT_PIN 17
-uint32_t heapSize = ESP.getFreeHeap();
 
-const char* ssid = "SSID";
-const char* password = "PASSWORD";
-const char* serverName = "URL";
-String seachString = "Crash Space is OPEN";
+// MAJOR CONFIG
+bool debug = false;
+bool debugSetup = false;
+bool demo = false;
+bool demoColors = false;
+const char* ssid = "";
+const char* password = "";
 
-bool CheckSign(){ //returns true if crashspace is open
-  bool openStatus= false;
+// MINOR CONFIG
+const int LOOP_TIME = 1000 * 60 * 2; // update sign every 2 minutes
+const int RESET_TIME = 1000 * 60 * 5; // reboot device if nonresponsive for 5 minutes
+
+// GET OPEN STATUS, DATE, AND TIME REMAINING
+const char* serverName = "http://crashspacela.com/sign/";
+const String statusSearchString = "Crash Space is OPEN";
+const String timeSearchString = "The space will close in ";
+const String dateSearchString = "<td>update</td><td> ";
+
+// LED ARRAYS
+CRGB lightning_leds[NUM_LEDS_LIGHTNING];
+CRGB text_leds[NUM_LEDS_TEXT];
+
+//uint32_t heapSize = ESP.getFreeHeap(); // for debugging
+
+String getWebsiteText() {
   WiFiClient client;
   HTTPClient http;
-    
   http.begin(client, serverName);
-  
   int httpResponseCode = http.GET();
   
-  String payload = "{}"; 
+  String payload = "error"; // this will make the sign appear off if the site is unreachable
   
-  if (httpResponseCode>0) {
-    payload = http.getString();           //payload should contain the source of the html of http://crashspacela.com/sign/
-    if (payload.indexOf(seachString)>0){  // when the button has been pressed the page should contain "Crash Space is OPEN"
-      openStatus = true;
-    }
+  if (httpResponseCode == 200) {
+    payload = http.getString();
   }
-  else {
+  else if (debug) {
     Serial.print("Error code: ");
     Serial.println(httpResponseCode);
   }
   http.end();
-  return openStatus;
+  return payload;
 }
 
-bool debug = true;
-bool demo = false;
-int timer = -1;
-int colors[][3][3] = {
-  {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}}
-};
+bool isSpaceOpen(String websiteText) {
+  if (websiteText.indexOf(statusSearchString)>0){
+      return true;
+  }
+  return false;
+}
 String colorKeys[] = {"02-14", "03-17", "07-04", "12-24", "12-25"};
 int colorValues[][3][3] = {
   {{200,90,90},{200,90,90},{200,90,90}},
@@ -52,33 +65,63 @@ int colorValues[][3][3] = {
   {{180,0,0},{0,180,0},{180,180,180}},
   {{180,0,0},{0,180,0},{180,180,180}}
 };
+int defaultColor[3][3] = {
+  {200, 200, 200}, 
+  {200, 200, 200}, 
+  {100, 20, 0}
+};
+int currentColor[3][3];
 
-CRGB lightning_leds[NUM_LEDS_LIGHTNING];
-CRGB text_leds[NUM_LEDS_TEXT];
-
-int counter = 0;
-void setSpecialColor(String dateString) {
-  if (demo) {
-    for (int i=0; i<NUM_LEDS_TEXT; i++) {
-      if (i >= 12) {
-        text_leds[i] = CRGB(colorValues[counter][0][0], colorValues[counter][0][1], colorValues[counter][0][2]);
-      } else {
-        text_leds[i] = CRGB(colorValues[counter][1][0], colorValues[counter][1][1], colorValues[counter][1][2]);
-      }
+void setCurrentColor(String websiteText) {
+  int dateIndex = websiteText.indexOf(dateSearchString) + dateSearchString.length() + 5; // ignore year portion (2023-)
+  String dateValue = websiteText.substring(dateIndex,dateIndex+5);
+  memcpy(currentColor, defaultColor, sizeof(defaultColor[0][0])*9);
+  for (int i=0; i<5; i++) {
+    if (colorKeys[i] == dateValue) {
+      memcpy(currentColor, colorValues[i], sizeof(defaultColor[0][0])*9);
     }
-    fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(colorValues[counter][2][0], colorValues[counter][2][1], colorValues[counter][2][2]));
   }
-  if (++counter > 4) {
-    counter = 0;
+}
+
+void setOpenTextLights() {
+  for (int i=0; i<NUM_LEDS_TEXT; i++) {
+    if (i >= 12) {
+      text_leds[i] = CRGB(currentColor[0][0], currentColor[0][1], currentColor[0][2]);
+    } else {
+      text_leds[i] = CRGB(currentColor[1][0], currentColor[1][1], currentColor[1][2]);
+    }
+  }
+  FastLED.show();
+}
+
+void setLightningBoltLights(String websiteText) {
+  int minutesRemainingIndex = websiteText.indexOf(timeSearchString) + timeSearchString.length();
+  int minutesRemainingValue = websiteText.substring(minutesRemainingIndex, minutesRemainingIndex+2).toInt();
+  int numberLit = ceil(8.0*(double(minutesRemainingValue)/60.0));
+  
+  for (int i=0; i<8; i++) {
+    if (i < numberLit) {
+      lightning_leds[7-i] = CRGB(currentColor[2][0], currentColor[2][1], currentColor[2][2]);
+    } else {
+      lightning_leds[7-i] = CRGB::Black;
+    }
   }
   FastLED.show();
 }
 
 void setup()
 {
+  Watchdog.enable(RESET_TIME);
+  
   if (debug) {
     Serial.begin(115200);
+    if (debugSetup) {
+      while (!Serial) {
+        delay(10);
+      }
+    }
   }
+  
   FastLED.addLeds<NEOPIXEL, LIGHTNING_BOLT_PIN>(lightning_leds, NUM_LEDS_LIGHTNING);
   FastLED.addLeds<NEOPIXEL, OPEN_TEXT_PIN>(text_leds, NUM_LEDS_TEXT);
   fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(0, 0, 0));
@@ -92,41 +135,52 @@ void setup()
   while(WiFi.status() != WL_CONNECTED) {
     delay(500);
     if (debug) {
-      Serial.print(".");
+      Serial.print((wl_status_t) WiFi.status());
+      Serial.println("/ connecting...");
     }
   }
-  heapSize = ESP.getFreeHeap();
+}
+
+void demoLoop() {
+  fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(150, 30, 0));
+  fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(180, 180, 180));
+  FastLED.show();
+  delay(1000);
+
+  if (demoColors) {
+    for (int i=0; i<5;i++) {
+      memcpy(currentColor, colorValues[i], sizeof(defaultColor[0][0])*9);
+      setOpenTextLights();
+      setLightningBoltLights("Space will close in 60 minutes");
+      delay(500);
+    }
+  }
+  
+  fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(0, 0, 0));
+  fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(0, 0, 0));
+  FastLED.show();
+  delay(1000);
 }
 
 void loop()
 {
   if (demo) {
-    if (timer == -1) {
-      timer = 1;
-//      setSpecialColor("testing");
-      fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(150, 30, 0));
-      fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(180, 180, 180));
-    } else {
-      timer = -1;
-      fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(0, 0, 0));
-      fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(0, 0, 0));
-    }
-    FastLED.show();
-    delay(1000);
+    demoLoop();
     return;
-  } else {
-    if (CheckSign()) {
-      fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(150, 30, 0));
-      fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(180, 180, 180));
-    } else {
-      fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(0, 0, 0));
-      fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(0, 0, 0));
-    }
-    if (debug) {
-      Serial.println(CheckSign());
-    }
-    FastLED.show();
-    delay(1000 * 60 * 2);
-    // wait two minutes for now. In the future lets make this longer
   }
+  String websiteText = getWebsiteText();
+  if (debug) {
+    Serial.println(isSpaceOpen(websiteText) ? "Crash is open" : "Crash is closed");
+  }
+  if (isSpaceOpen(websiteText)) {  
+    setCurrentColor(websiteText);
+    setOpenTextLights();
+    setLightningBoltLights(websiteText);
+  } else {
+    fill_solid(lightning_leds, NUM_LEDS_LIGHTNING, CRGB(0, 0, 0));
+    fill_solid(text_leds, NUM_LEDS_TEXT, CRGB(0, 0, 0));
+    FastLED.show();
+  }
+  Watchdog.reset();
+  delay(LOOP_TIME);
 }
